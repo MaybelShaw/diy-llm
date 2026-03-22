@@ -213,7 +213,7 @@ assert y.size() == torch.Size([16, 2])
 
 <div align="center">
    <img src="https://raw.githubusercontent.com/datawhalechina/diy-llm/main/docs/chapter3/images/3-4-矩阵乘法.png" />
-   <p>图3.3 剪枝方法介绍</p>
+   <p>图3.4 矩阵乘法</p>
  </div>
 
 - `batch` 标签指向堆叠起来的多个矩形，代表一个批次中包含的多个样本。
@@ -324,7 +324,7 @@ w: Float[torch.Tensor, "hidden1 hidden2"] = torch.ones(4, 4)
 现在你想对 hidden1 做矩阵乘法，但当前维度是扁平的，我们需要对其进行**维度拆分**（flatten → multi-dim）：
 
 ```
-# 拆分 total_hidde n为 heads 和 hidden1
+# 拆分 total_hidden为 heads 和 hidden1
 x = rearrange(x, "... (heads hidden1) -> ... heads hidden1", heads=2)
 ```
 (heads hidden1) 表示“这两个维度被乘在一起，现在我要拆开它”。因为 8 可以拆成 (2,4), (4,2), (8,1) 等，所以必须指定 heads=2 用来固定拆分后的维度。
@@ -948,7 +948,7 @@ assert x.size() == torch.Size([B, L]) # 验证输出张量的形状
 
 接下来，我们详细看下`get_batch` 函数的内部处理逻辑：
 
-```
+```python
 def get_batch(data: np.array, batch_size: int, sequence_length: int, device: str) -> torch.Tensor:
     # 随机采样起始位置
     start_indices = torch.randint(len(data) - sequence_length, (batch_size,)) # 使用 torch.randint 在 [0, len(data) - sequence_length] 范围内随机生成 batch_size 个起始索引。这样可以确保每个序列都能完整地从数据中截取出来，不会越界
@@ -960,7 +960,7 @@ def get_batch(data: np.array, batch_size: int, sequence_length: int, device: str
 
     # 固定内存（Pinned Memory）优化
     if torch.cuda.is_available():
-    x = x.pin_memory()
+        x = x.pin_memory()
 
     # 异步数据传输
     x = x.to(device, non_blocking=True) 
@@ -1155,7 +1155,7 @@ def train(name: str, get_batch,
 
     # 初始化模型和优化器
     model = Cruncher(dim=D, num_layers=0).to(get_device())
-    optimizer = SGD(model.parameters(), lr=0.01)
+    optimizer = SGD(model.parameters(), lr=lr)
 
     # 主训练循环
     for t in range(num_train_steps): # 循环执行 num_train_steps 次，每次迭代称为一个“训练步”
