@@ -719,19 +719,19 @@ $$
 \frac{\partial L}{\partial W_{2}[j,k]} = \sum_{i} h_{1}[i,j]\,\frac{\partial L}{\partial h_{2}[i,k]}
 $$
 
-其中 $i$ 为 batch 维下标（与上文 $h_1$ 的行对应）。与 PyTorch 一致地记 $\texttt{h2.grad}[i,k]=\partial L/\partial h_{2}[i,k]$，即 $\texttt{w2.grad}[j,k]=\sum_i \texttt{h1}[i,j]\cdot\texttt{h2.grad}[i,k]$，等价于矩阵形式 $\texttt{w2.grad} = \texttt{h1}^{\mathsf{T}} @ \texttt{h2.grad}$。
+其中 $i$ 为 batch 维下标（与上文 $h_1$ 的行对应）。与 PyTorch 一致地记 ${h2.grad}[i,k]=\partial L/\partial h_{2}[i,k]$ ，即 ${w2.grad}[j,k]=\sum_i {h1}[i,j]\cdot{h2.grad}[i,k]$ ，等价于矩阵形式 ${w2.grad} = {h1}^{\mathsf{T}} @ {h2.grad}$ 。
 
-这本质上是一个矩阵乘法：$\texttt{h1}$ 的形状是 $(B, D)$，$\texttt{h2.grad}$ 的形状是 $(B, K)$，$\texttt{h1}^{\mathsf{T}} @ \texttt{h2.grad}$ 的形状是 $(D, K)$，正好是 $\texttt{w2.grad}$ 的形状。因此，计算 $\texttt{w2.grad}$ 的 FLOPs 为：**2 × B × D × K**
+这本质上是一个矩阵乘法：$h1$ 的形状是 $(B, D)$，$h2.grad$ 的形状是 $(B, K)$，${h1}^{\mathsf{T}} @ {h2.grad}$ 的形状是 $(D, K)$，正好是 ${w2.grad}$ 的形状。因此，计算 ${w2.grad}$ 的 FLOPs 为：**2 × B × D × K**
 
-为了将梯度继续传回第一层（随后才能算 $\texttt{w1.grad}$），需要先求 $\partial L/\partial h_1$。由 $h_2 = h_1 W_2$ 对 $h_1$ 求导得 $\frac{\partial L}{\partial h_1} = \frac{\partial L}{\partial h_2} W_2^{\mathsf{T}}$：
+为了将梯度继续传回第一层（随后才能算 ${w1.grad}$），需要先求 $\partial L/\partial h_1$。由 $h_2 = h_1 W_2$ 对 $h_1$ 求导得 $\frac{\partial L}{\partial h_1} = \frac{\partial L}{\partial h_2} W_2^{\mathsf{T}}$：
 
 $$
 \frac{\partial L}{\partial h_{1}[i,j]} = \sum_{k} \frac{\partial L}{\partial h_{2}[i,k]}\, W_{2}[j,k]
 $$
 
-其中 $k$ 为输出维下标。记 PyTorch 的 $\texttt{h1.grad}$、$\texttt{h2.grad}$ 即上式左、右端的 $\partial L/\partial h_1$、$\partial L/\partial h_2$，则元素形式为 $\texttt{h1.grad}[i,j]=\sum_k \texttt{h2.grad}[i,k]\cdot\texttt{w2}[j,k]$，矩阵形式为 $\texttt{h1.grad} = \texttt{h2.grad} @ \texttt{w2}^{\mathsf{T}}$。
+其中 $k$ 为输出维下标。记 PyTorch 的 ${h1.grad}$、${h2.grad}$ 即上式左、右端的 $\partial L/\partial h_1$、$\partial L/\partial h_2$，则元素形式为 ${h1.grad}[i,j]=\sum_k {h2.grad}[i,k]\cdot{w2}[j,k]$，矩阵形式为 ${h1.grad} = {h2.grad} @ {w2}^{\mathsf{T}}$。
 
-$\texttt{w2}$ 的形状是 $(D, K)$，$\texttt{h2.grad}$ 的形状是 $(B, K)$，故 $\texttt{h2.grad} @ \texttt{w2}^{\mathsf{T}}$ 为 $(B, D)$，与 $\texttt{h1.grad}$ 一致。计算 $\texttt{h1.grad}$ 的 FLOPs 也是：**2 × B × D × K**。
+${w2}$ 的形状是 $(D, K)$，${h2.grad}$ 的形状是 $(B, K)$，故 ${h2.grad} @ {w2}^{\mathsf{T}}$ 为 $(B, D)$，与 ${h1.grad}$ 一致。计算 ${h1.grad}$ 的 FLOPs 也是：**2 × B × D × K**。
 
 同理，第一层 $h_1 = x\, W_1$ 对 $W_1$ 的梯度为 $\frac{\partial L}{\partial W_1} = x^{\mathsf{T}}\frac{\partial L}{\partial h_1}$：
 
@@ -739,7 +739,7 @@ $$
 \frac{\partial L}{\partial W_{1}[j,k]} = \sum_{i} x[i,j]\,\frac{\partial L}{\partial h_{1}[i,k]}
 $$
 
-即 $\texttt{w1.grad}[j,k]=\sum_i x[i,j]\cdot\texttt{h1.grad}[i,k]$，矩阵形式 $\texttt{w1.grad} = x^{\mathsf{T}} @ \texttt{h1.grad}$。其 FLOPs 为：**2 × B × D × D**。
+即 ${w1.grad}[j,k]=\sum_i x[i,j]\cdot{h1.grad}[i,k]$，矩阵形式 ${w1.grad} = x^{\mathsf{T}} @ {h1.grad}$。其 FLOPs 为：**2 × B × D × D**。
 
 将这个过程[可视化](https://medium.com/@dzmitrybahdanau/the-flops-calculus-of-language-model-training-3b19c1f025e4)：
 
@@ -782,7 +782,7 @@ output = x @ w # 输出向量
 ```
 当 input_dim = 16384 时，输出值的大小约为 18.9，这是一个非常大的数值。这种大数值会逐层放大，导致梯度爆炸（gradient explosion），使训练过程变得极不稳定，甚至无法收敛。
 
-为了克服这个问题，我们需要一种对输入维度 input_dim 不敏感的初始化方法。解决方法是使用 **Xavier (Kaiming) 初始化**([paper](https://proceedings.mlr.press/v9/glorot10a/glorot10a.pdf))。通过除以 $\sqrt{\text{输入维度}}$ 来缩放权重，保持数值稳定性。
+为了克服这个问题，我们需要一种对输入维度 input_dim 不敏感的初始化方法。解决方法是使用 **Xavier初始化**([paper](https://proceedings.mlr.press/v9/glorot10a/glorot10a.pdf))。通过除以 $\sqrt{\text{输入维度}}$ 来缩放权重，保持数值稳定性。
 
 ```python
 w = nn.Parameter(torch.randn(input_dim, output_dim) / np.sqrt(input_dim))
