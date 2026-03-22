@@ -36,89 +36,111 @@
 *简单来说，命名实体识别是自然语言处理（NLP）中的一项基础任务，它的作用就像一台“目标扫描仪”——从大量非结构化的文本中，自动识别并提取出具有特定意义的实体（如人名、地名、组织机构、时间等）。*
    
 ```python
-import re
-from typing import List, Callable
-from transformers import pipeline
-
-# 初始化NER模型（中文）
+# 初始化命名实体识别（NER）流水线
 ner_pipeline = pipeline(
     "ner",
     model="ckiplab/bert-base-chinese-ner",
-    grouped_entities=True
+    grouped_entities=True  # 将相邻的同类实体片段合并，例如“重”、“庆”合并为“重庆”
 )
 
 def ner_mask(text: str) -> str:
+    """
+    利用深度学习模型进行语义级别的脱敏（人名与地名）
+    """
     entities = ner_pipeline(text)
     spans = []
+    
+    # 提取模型识别出的实体及其位置
     for ent in entities:
         label = ent["entity_group"]
         start = ent["start"]
         end = ent["end"]
 
-        if label == "PER":
+        # 映射实体类型到脱敏占位符
+        if label == "PER":  # Person: 人名
             spans.append((start, end, "[NAME]"))
-        elif label == "LOC":
+        elif label == "LOC":  # Location: 地名/地址
             spans.append((start, end, "[PLACE]"))
 
-    # 按长度优先
+    # 排序逻辑：按起始位置升序；如果起始位置相同，按长度降序（优先处理长实体）
     spans.sort(key=lambda x: (x[0], -(x[1] - x[0])))
 
-    # 去重叠
+    # 解决冲突：去除重叠或包含关系的实体区间
     filtered_spans = []
     last_end = -1
     for start, end, tag in spans:
-        if start >= last_end:
+        if start >= last_end:  # 只有当当前实体起始位置在上一实体结束之后，才保留
             filtered_spans.append((start, end, tag))
             last_end = end
 
+    # 根据过滤后的区间重建文本
     result = []
     last_idx = 0
     for start, end, tag in filtered_spans:
-        result.append(text[last_idx:start])
-        result.append(tag)
+        result.append(text[last_idx:start]) # 拼接非敏感部分
+        result.append(tag)                  # 拼接占位符
         last_idx = end
-    result.append(text[last_idx:])
+    result.append(text[last_idx:])          # 拼接剩余文本
+
     return "".join(result)
 
+
+# 2. 脱敏流水线架构设计
 class DesensitizationPipeline:
+    """
+    脱敏任务管理器：允许按顺序添加多个处理步骤
+    """
     def __init__(self):
         self.steps: List[Callable[[str], str]] = []
 
     def add_step(self, func: Callable[[str], str]):
+        """添加处理环节（如正则替换、NER替换等）"""
         self.steps.append(func)
 
     def run(self, text: str) -> str:
+        """按顺序执行所有脱敏步骤"""
         for step in self.steps:
             text = step(text)
         return text
+
+# 3. 具体处理步骤实现
 def normalize_text(text: str) -> str:
-    # 去除多余空格、统一符号（简单示例）
+    """文本预处理：去除首尾空格"""
     return text.strip()
 
-# 高确定性规则
+# 高确定性规则（强特征：手机号、邮箱）
 def mask_phone(text: str) -> str:
+    """正则匹配 11 位中国手机号"""
     return re.sub(r'1[3-9]\d{9}', '[PHONE]', text)
 
 def mask_email(text: str) -> str:
+    """正则匹配常见邮箱格式"""
     return re.sub(r'[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}', '[EMAIL]', text)
 
-# 中确定性
+# 中确定性规则（基于关键词上下文）
 def mask_address(text: str) -> str:
+    """通过“居住于”等关键词引导的地址匹配"""
     return re.sub(
         r'(居住于|现居住于|现居于|地址)([\u4e00-\u9fa5A-Za-z0-9]+)',
         r'\1[PLACE]',
         text
     )
 
-# 低确定性
+# 低确定性规则（基于语法结构的简单兜底）
 def mask_name(text: str) -> str:
-    # 只匹配句首 or 标点后
+    """
+    兜底策略：匹配出现在句首或标点后的“某某某的”结构
+    注：容易误伤，通常放在 NER 步骤之后作为补充
+    """
     return re.sub(
         r'(?:(?<=^)|(?<=[，。！？]))([\u4e00-\u9fa5]{2,3})(的)',
         r'[NAME]\2',
         text
     )
 
+def clean_punctuation(text: str) -> str:
+    """后处理环节：可根据需求规范化标点符号"""
+    return text
 ```
 
 [ 数据脱敏处理完整代码.py ](https://github.com/datawhalechina/diy-llm/blob/main/docs/chapter2/%E6%95%B0%E6%8D%AE%E8%84%B1%E6%95%8F%E5%A4%84%E7%90%86%E5%AE%8C%E6%95%B4%E4%BB%A3%E7%A0%81.py)  
@@ -192,63 +214,68 @@ if __name__ == "__main__":
         
 ```python
 import unicodedata
-"""
-- CJK：中文字符（\u4e00 到 \u9fff）
-- DIGIT：数字
-- ALPHA：字母（英文等）
-- PUNCT：Unicode标点
-- OTHER：其他字符（如emoji）
 
-"""
 def get_char_category(ch: str) -> str:
+    # 获取Unicode标准定义的分类（如'Lu'代表大写字母,'Po'代表其它标点）
     cat = unicodedata.category(ch)
 
+    # 判定是否为中文字符（常用基本汉字区间）
     if '\u4e00' <= ch <= '\u9fff':
         return "CJK"
+    
+    # 判定是否为数字
     if ch.isdigit():
         return "DIGIT"
+    
+    # 判定是否为英文字母（或其他语言的字母）
     if ch.isalpha():
         return "ALPHA"
 
-    if cat.startswith("P"):  # 标点
+    # 判定是否为标点符号（Unicode 分类以 'P' 开头的均为标点）
+    if cat.startswith("P"):
         return "PUNCT"
 
+    # 其余字符（如 Emoji、空格、控制符等）统一归为 OTHER
     return "OTHER"
 
 
 def segment_by_unicode_category(text: str):
-    """基于Unicode类别分段，并支持连续标点合并"""
-
     if not text:
         return []
-
     segments = []
+    # 初始化缓冲区，放入第一个字符
     buffer = [text[0]]
+    # 获取第一个字符的类别作为初始参考标准
     prev_type = get_char_category(text[0])
 
-    # 第一阶段：按类别切分（允许OTHER连续合并）
+    # 第一阶段：线性扫描文本，按类别切分
     for ch in text[1:]:
         curr_type = get_char_category(ch)
 
+        # 如果当前字符类别与前一个字符相同，则存入缓冲区合并
         if curr_type == prev_type:
             buffer.append(ch)
         else:
+            # 类别发生变化，将缓冲区内容作为一个片段存入结果列表
             segments.append(("".join(buffer), prev_type))
+            # 重置缓冲区，开始记录新类别的字符
             buffer = [ch]
             prev_type = curr_type
 
+    # 处理最后一个留在缓冲区里的片段
     segments.append(("".join(buffer), prev_type))
 
-    # 第二阶段：直接输出（不再拆OTHER）
+    # 第二阶段：提取分段后的字符串内容
     tokens = [seg for seg, _ in segments]
-
     return tokens
 
-
+# 测试运行
 if __name__ == "__main__":
+    # 测试字符串包含：英文、Emoji、中文标点、中文、数字、英文标点
     s = "Hello👋👋，Datawhale成立于2018年！！！"
-    print(segment_by_unicode_category(s))
-
+    result = segment_by_unicode_category(s)
+    print("原始文本:", s)
+    print("分段结果:", result)
 ```
      
 输入
@@ -373,11 +400,12 @@ if __name__ == "__main__":
 
 1. **子词候选统计**
 
-遍历语料以收集用于后续决策的统计信息，具体方法随算法不同而异：
+遍历语料以收集用于后续决策的统计信息，具体方法随算法不同而异
 
    - BPE：统计当前字符、子词序列中相邻对的出现频次，每次贪心合并出现频次最高的相邻对，迭代构建词表——其决策仅基于频率统计。
    - WordPiece：评估合并或保留某些子词对对语料似然即语言模型性能的贡献，选择能显著提升语料拟合度的合并操作。
    - Unigram：从一个过大的种子词表出发，初始化每个token的概率。
+   - SentencePiece：是一个语言无关的子词分词框架，提供统一的训练与编码流程，支持多种分词算法（如BPE和Unigram）。这些算法在同一框架下独立使用，而非直接融合使用，其互补性体现在不同任务和数据条件下的适用性差异。
        
 
 | 算法                           | 适用场景                               | 常见实现方式                                             | 典型LLM / 模型                                                                          |
@@ -393,7 +421,8 @@ if __name__ == "__main__":
 >- mT5：在多语言语料上预训练的T5扩展版本，支持跨语言任务；
 >- UL2：一种统一的预训练范式，通过混合多种去噪目标（类似BERT、T5的目标任务），提升模型在不同下游任务的泛化能力。
 >
->从T5的任务表示统一，到mT5的跨语言扩展，再到UL2在预训练阶段对多种去噪目标的**统一联合优化**，这一演化路径逐步实现了**从“任务层统一”到“数据分布扩展”再到“训练信号统一”的范式升级**，使语言模型能够在**共享参数空间中学习更具普适性的条件分布**，从而显著增强其跨任务与跨分布的泛化能力。  *👉 LLM能力的提升可以看成是“统一性不断增强”的过程*
+>从T5的任务表示统一，到mT5的跨语言扩展，再到UL2在预训练阶段对多种去噪目标的**统一联合优化**，这一演化路径逐步实现了**从“任务层统一”到“数据分布扩展”再到“训练信号统一”的范式升级**，使语言模型能够在**共享参数空间中学习更具普适性的条件分布**，从而显著增强其跨任务与跨分布的泛化能力。
+>*👉 LLM能力的提升可以看成是“统一性不断增强”的过程*
 
 
 2. **迭代**
@@ -545,66 +574,95 @@ $$
   - **应用：** 现代LLM如GPT-4, Llama通常不单独使用纯字节分词，而是将字节作为BPE的基础单位即BBPE，这样可以彻底解决跨语言和特殊符号如emoji 🌍等的编码问题。
 
    ```python
-   # Byte-level Tokenizer实现
-   class ByteTokenizer:
-       def __init__(self):
-           # vocab就是0~255的256个值
-           self.vocab_size = 256
-   
-       def encode(self, text: str):
-           # 将字符串编码为UTF-8字节序列 转为int列表
-           return list(text.encode("utf-8"))
-   
-       def decode(self, indices):
-           # 将int列表→bytes→UTF-8 字符串
-           return bytes(indices).decode("utf-8")
-   
-   
-   # 计算压缩率
-   def get_compression_ratio(text: str, indices):
-       input_byte_len = len(text.encode("utf-8"))  # 原始字节序列长度
-       token_len = len(indices)                   # token数量
-       return input_byte_len / token_len if token_len > 0 else 1
-   
-   # 测试
-   if __name__ == "__main__":
-   
-       print("以下测试单字节与多字节 UTF-8 字符：")
-       assert bytes("a", encoding="utf-8") == b"a"
-       assert bytes("🌍", encoding="utf-8") == b"\xf0\x9f\x8c\x8d"
-       print("测试通过：UTF-8单字节与多字节验证完毕\n")
-   
-       tokenizer = ByteTokenizer()
-       string = "Hello, 🌍! 你好!"
-       print("原始字符串：", string)
-       indices = tokenizer.encode(string)
-       print("编码后的byte token序列：", indices)
-   
-       reconstructed_string = tokenizer.decode(indices)
-       print("解码结果：", reconstructed_string)
-   
-       assert string == reconstructed_string
-       print("\nRound-trip测试通过")
-   
-       vocabulary_size = tokenizer.vocab_size
-       print("\n词表大小:", vocabulary_size)
-   
-       compression_ratio = get_compression_ratio(string, indices)
-       print("压缩率compression_ratio:", compression_ratio)
-   
-       assert compression_ratio == 1
-       print("压缩率测试通过（byte tokenizer无压缩）。")
+# 字节级Tokenizer
+from collections import Counter
+class ByteTokenizer:
+    def __init__(self):
+        self.vocab_size = 256
+
+    def encode(self, text: str):
+        return list(text.encode("utf-8"))
+
+    def decode(self, indices):
+        return bytes(indices).decode("utf-8")
+
+# 字符级Tokenizer
+class CharTokenizer:
+    def __init__(self):
+        self.vocab = {}
+        self.inverse_vocab = {}
+
+    def encode(self, text: str):
+        tokens = []
+        for ch in text:
+            if ch not in self.vocab:
+                idx = len(self.vocab)
+                self.vocab[ch] = idx
+                self.inverse_vocab[idx] = ch
+            tokens.append(self.vocab[ch])
+        return tokens
+
+    def decode(self, indices):
+        return "".join(self.inverse_vocab[i] for i in indices)
+
+# 计算压缩率（byte/token）
+def get_compression_ratio(text: str, token_len: int):
+    input_byte_len = len(text.encode("utf-8"))
+    return input_byte_len / token_len if token_len > 0 else 1
+
+
+# 简易 BPE Tokenizer
+class BPETokenizer:
+    def __init__(self, num_merges):
+        self.num_merges = num_merges
+        self.merges = {}  # {(a,b): new_token_id}
+        self.vocab_size = 256  # 从byte开始
+
+    def get_stats(self, tokens):
+        pairs = Counter()
+        for i in range(len(tokens) - 1):
+            pairs[(tokens[i], tokens[i+1])] += 1
+        return pairs
+
+    def merge_tokens(self, tokens, pair, new_token):
+        i = 0
+        new_tokens = []
+        while i < len(tokens):
+            if i < len(tokens) - 1 and (tokens[i], tokens[i+1]) == pair:
+                new_tokens.append(new_token)
+                i += 2
+            else:
+                new_tokens.append(tokens[i])
+                i += 1
+        return new_tokens
    ```
+
+[BPE、字符级、字节级的分词器效果对比.py](https://github.com/1iyouzhen/CS336-Chinese-co-construction/blob/main/docs/chapter2/BPE%E3%80%81%E5%AD%97%E7%AC%A6%E7%BA%A7%E3%80%81%E5%AD%97%E8%8A%82%E7%BA%A7%E7%9A%84%E5%88%86%E8%AF%8D%E5%99%A8%E6%95%88%E6%9E%9C%E5%AF%B9%E6%AF%94.py)
 
 输入
 > Hello, 🌍! 你好!
 
 输出
-> 原始字符串： Hello, 🌍! 你好!
-> 
->编码后的byte token序列： [72, 101, 108, 108, 111, 44, 32, 240, 159, 140, 141, 33, 32, 228, 189, 160, 229, 165, 189, 33]
-> 
->压缩率compression_ratio: 1.0
+>原始字符串： Hello, 🌍! 你好!
+>
+>原始字节长度： 20
+>
+>字节级、字符级、BPE的token数量分别为: 20、13、11
+>
+>=== 压缩率(byte/token) ===
+>
+>字节级: 1.00
+>
+>字符级: 1.54
+>
+>BPE: 1.82
+>
+>=== 结论 ===
+>1. 字节级：无压缩，最稳定
+>2. 字符号级：用UTF-8字符压缩（中文/emoji更明显）
+>3. BPE：通过学习高频子串，实现真正“数据驱动压缩”
+>
+>由此可得，BPE压缩效果最好（最接近真实LLM tokenizer）
 
 值得注意的是**字节级分词器的压缩比恒等于1**，原因在于：
 
@@ -869,13 +927,14 @@ $$
 
 *因此，`</w>`的核心作用是保证单词完整性，并让编码可逆即可以从相应的数字序列转化为原文。*
 
-**3种分词器对比表**
+**4种分词器对比表**
+| 分词器类型           | 粒度         | 词表大小              | 词表外(OOV) | 序列长度   | 代表模型               |
+| :-------------- | :--------- | :---------------- | :------- | :----- | :----------------- |
+| 字符级             | 细          | 小 (100–5k)        | 无        | 非常长    | Char-RNN           |
+| 字节级             | 更细（字节）     | 很小 (~256–1k)      | 无        | 很长     | GPT-2              |
+| 词级              | 粗          | 极大 (>100k)        | 严重       | 短      | Word2Vec, GloVe    |
+| **BPE**         | **中（自适应）** | **适中 (30k–100k)** | **极少**   | **适中** | **GPT-4, Llama 3** |
 
-| 分词器类型 | 粒度 | 词表大小 | 未登录词 (OOV) | 序列长度 | 代表模型 |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| 字符级 | 细 | 小 (100-5k) | 无 | 非常长 | Char-RNN |
-| 词级 | 粗 | 极大 (>100k) | 严重 | 短 | Word2Vec, GloVe |
-| **BPE** | **中 (自适应)** | **适中 (30k-100k)** | **极少** | **适中** | **GPT-4, Llama 3** |
 
 除了`分词器的选择`与`训练语料`直接影响LLM的输入稀疏度与表示效率。用大规模、高质量且多样的语料训练分词器通常会`减少token碎片化`即生成更常见、更稳定的子词单元，使得同一段文字被编码为更少的token，同时在固定的上下文窗口长度下单位token承载更多实际信息，这意味着模型能够在有限窗口内“看到”更多内容——从而在一定程度上缓解因上下文长度受限引起的信息丢失。
 
@@ -904,7 +963,8 @@ print(f"分词器词表大小V: {len(tokenizer.get_vocab())}")
 ```
 
 ### 2.3.2 DeepSeek分词器的处理逻辑
-DeepSeek的分词器基于BPE在处理中、英文和代码时具有其独特的策略。
+
+DeepSeek优化的字节级BPE词表通过对中文字词分布与代码缩进的精细建模，显著缩短了token序列长度，这种设计在确保语义完整性的同时，大幅提升了推理吞吐。本文将通过剖析中文分词实例，直观展现其如何通过高频词簇聚合来优化文本序列的效率。
 
 **举例分析: 中文文本处理**
 
@@ -920,7 +980,7 @@ print(f"编码: {tokens}")
 print(f"IDs:{encoded_ids}")
 ```
 
-得到token字符串划分结果可能在显示上与原文有所差异这并不是编码本身出错，而是因为LLM所用的**词表**在训练过程中<ins>对某些字符或子词的覆盖不足</ins>（例如BPE训练不够充分），导致模型无法生成对应的token，从而在可读形式上看起来像“乱码”。可以通过增加训练语料量或进行充分的BPE训练，可以学习到更完整的token映射词表，从而解决这个问题，使中文、英文、emoji等字符都能被正确编码和解码。接下来是相应的解决办法即训练BPE：
+得到token字符串划分结果可能在显示上与原文有所差异这并不是编码本身出错，而是因为LLM所用的**词表**在训练过程中<ins>对某些字符或子词的覆盖不足</ins>（例如BPE训练不够充分），导致模型无法生成对应的token，从而在可读形式上看起来像“乱码”。通过增加训练语料量或进行充分的BPE训练，可以学习到更完整的token映射词表，从而解决这个问题，使中文、英文、emoji等字符都能被正确编码和解码。接下来是相应的解决办法即训练BPE：
 
 ```python
 """
@@ -1246,4 +1306,4 @@ if __name__ == "__main__":
 - [BPE算法](https://arxiv.org/pdf/1508.07909)
 - [CS336的Lecture1课程资料](https://stanford-cs336.github.io/spring2025-lectures/?trace=var%2Ftraces%2Flecture_01.json&source=lecture_01.py&line=238)
 
-*写到最后，衷心感谢每一位提出宝贵意见的小伙伴～ 你们的反馈让这份教程变得更好！🤝🌼*
+*写到最后，衷心感谢每一位提出宝贵意见的小伙伴～ 你们的反馈让这份教程变得更好！🤝🤝*
