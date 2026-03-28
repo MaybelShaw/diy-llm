@@ -85,7 +85,7 @@
 
 <div align="center">
    <img src="https://raw.githubusercontent.com/datawhalechina/diy-llm/main/docs/chapter12/images/12-10-chatbot-arera.png" />
-   <p>图12.8 不同模型在 SuperCLUE 网站上的性能排行榜</p>
+   <p>图12.10 不同模型在 SuperCLUE 网站上的性能排行榜</p>
  </div>
 
 ### 主观评价与社区口碑
@@ -200,7 +200,7 @@ $$
 
 <div align="center">
    <img src="https://raw.githubusercontent.com/datawhalechina/diy-llm/main/docs/chapter12/images/12-12-CNN+LSTM 架构显著降低困惑度.png" />
-   <p>图12.11 CNN+LSTM 架构显著降低困惑度</p>
+   <p>图12.12 CNN+LSTM 架构显著降低困惑度</p>
  </div>
 
 OpenAI 在 [《Language Models are Unsupervised Multitask Learners》](https://cdn.openai.com/better-language-models/) 论文中发布的 GPT-2，在 WebText（来自 Reddit 链接的网页文本，约 40GB）上训练，然后直接在标准数据集上做 zero-shot（零样本）评估。
